@@ -1414,3 +1414,18 @@
   - 限流仍先发送包含失败原因的摘要，再返回 `rate_limited` 正常结束；不会把限流记为领取成功，其他领取异常仍保持失败。未改动登录、hCaptcha、浏览器或 checkout 业务逻辑，保留 `master` 的 `70354be` 浏览器修复。
   - 对最新 PR 代码完成静态复审，并核对 WXPush 上游 `/wxsend` 响应协议；Ruff、Black、Python 语法、工作流 YAML 和 `git diff --check` 检查通过。
   - 按仓库规则，本轮未执行测试或真实微信投递。新增文件包含 29 个测试定义，但仍缺少发送异常、双渠道调度及限流返回值的集成回归覆盖；不能将此前浏览器修复的 70 项测试结果视为本 PR 的验证结果。
+
+## 2026-11-10
+
+### 领取页登录态误判：isloggedin=false 需经账号会话复核后才可信
+
+- 现象：
+  - 工作流运行 #23（2026-11-10）：授权服务登录成功且会话经订单历史端点验证通过，但领取流程一启动就报 `❌ context cookies is not available`，随后 `RuntimeError: Epic Games session cookies are unavailable after authentication`（epic_games_service.py），未领取任何游戏。
+- 根因判断：
+  - 授权与领取共用同一浏览器上下文，Cookie 本应共享；问题在领取服务 `_wait_for_claim_page_login_state` 对全新页面上 `//egs-navigation` 的 `isloggedin` 属性第一次读到 `"false"` 就立即采信。而商城 SPA 在账号引导请求完成前会先渲染 `isloggedin=false`，新页面在 domcontentloaded 后约 1.5 秒的首读很容易撞上这个瞬时假值，会话实际有效（同一运行中授权侧刚验证通过）。
+- 改动文件：
+  - `app/services/epic_games_service.py`
+  - `docs/maintenance-log.md`
+- 处理结果：
+  - `_wait_for_claim_page_login_state` 不再立即采信首个 `"false"`：先用既有的订单历史账号会话探针复核一次，探针通过即按已登录处理；探针不过则重载领取页并在原 45 秒窗口内继续轮询；截止时最终探针仍不过且期间见过 `"false"` 才返回 `"false"`，保持真实未登录时的原有结局。`"true"` 与标记缺失时的原有逻辑不变。
+  - 按仓库规则未执行测试；已做 Python 语法静态检查（py_compile 通过）。真实效果待下一次工作流运行验证。
