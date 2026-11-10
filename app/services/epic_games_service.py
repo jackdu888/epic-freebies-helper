@@ -186,7 +186,9 @@ class EpicAgent:
     async def _wait_for_claim_page_login_state(self, timeout_seconds: int = 45) -> str:
         deadline = time.monotonic() + timeout_seconds
         account_probe_at = time.monotonic() + 8
-        account_probe_attempted = False
+account_probe_attempted = False
+        false_probe_attempted = False
+        saw_false = False
 
         while time.monotonic() < deadline:
             if self._needs_privacy_policy_correction():
@@ -198,8 +200,23 @@ class EpicAgent:
                 raise EpicManualActionRequiredError(self._mfa_setup_prompt_message(self.page.url))
 
             status = await self._get_login_status(timeout_ms=1500)
-            if status in {"true", "false"}:
-                return status
+            if status == "true":
+                return "true"
+            if status == "false":
+                # The store SPA renders egs-navigation with isloggedin=false
+                # before its account bootstrap finishes, so a single early
+                # "false" on a fresh page is not trustworthy. Confirm against
+                # the account session once before believing it.
+                saw_false = True
+                if not false_probe_attempted:
+                    false_probe_attempted = True
+                    logger.warning(
+                        "Claim page reports isloggedin=false; "
+                        "verifying against account session before trusting it."
+                    )
+                    if await self._has_account_session():
+                        return "true"
+                    await self._goto_claim_page()
 
             if not account_probe_attempted and time.monotonic() >= account_probe_at:
                 account_probe_attempted = True
@@ -217,6 +234,9 @@ class EpicAgent:
 
         if await self._has_account_session():
             return "true"
+
+        if saw_false:
+            return "false"
 
         raise RuntimeError(
             "Could not determine Epic login state because //egs-navigation did not appear. "
