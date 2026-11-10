@@ -186,7 +186,7 @@ class EpicAgent:
     async def _wait_for_claim_page_login_state(self, timeout_seconds: int = 45) -> str:
         deadline = time.monotonic() + timeout_seconds
         account_probe_at = time.monotonic() + 8
-account_probe_attempted = False
+        account_probe_attempted = False
         false_probe_attempted = False
         saw_false = False
 
